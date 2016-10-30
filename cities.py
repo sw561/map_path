@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
+from distutils.version import LooseVersion
 
 # A module to find the shortest path between cities on the globe and plot these
 # using various projections.
@@ -8,6 +9,17 @@ import matplotlib.pyplot as plt
 # Constants
 RADIUS_EARTH = 6371. # in km
 MILES_PER_KM = 0.621371
+
+def distance(coords1, coords2, radius=RADIUS_EARTH):
+    # Just find the distance between two pairs of coordinates across the
+    # surface of a sphere. Radius of the sphere defaults to radius of the Earth
+    # Format of coords1,2 = (longitude, latitude)
+    try:
+        disc = Disc(coords1, coords2)
+        phi = disc.phi_destination
+    except IllConditionedException:
+        phi = math.pi
+    return phi*radius
 
 def exception_handler(f):
     def helper(*args, **kwargs):
@@ -17,18 +29,29 @@ def exception_handler(f):
             pass
     return helper
 
+def need_plot_setup(f):
+    def helper(*args, **kwargs):
+        if not args[0].plot:
+            print "Need to use an instance of Cities initialised with plot=True"
+            return
+        return f(*args, **kwargs)
+    return helper
+
 class Cities:
     def __init__(self, database_path="database", use_miles=False,
-            projection=None):
-        if projection is None:
-            projection = Equirectangular()
+            projection=None, plot=True):
         self.database = Database(database_path)
-        self.plotted_cities = set()
         self.use_miles = use_miles
-        self.projection = projection
-        set_up_plot(projection)
+        self.plot = plot
+        if plot:
+            if projection is None:
+                projection = Equirectangular()
+            self.projection = projection
+            self.plotted_cities = set()
+            set_up_plot(projection)
 
     @exception_handler
+    @need_plot_setup
     def plot_city(self, key):
         if key in self.plotted_cities:
             return
@@ -36,14 +59,13 @@ class Cities:
         plot_city(key, coords, self.projection)
         self.plotted_cities.add(key)
 
-    @exception_handler
+    @need_plot_setup
     def plot_path(self, key1, key2, n_points=101):
         for key in (key1, key2):
             self.plot_city(key)
-        vs = tuple(self.database.get(k) for k in (key1, key2))
 
         try:
-            disc = Disc(vs[0], vs[1])
+            disc = self.disc(key1, key2)
         except IllConditionedException:
             print "Not plotting path from %s to %s." % (key1, key2)
             print "Cities on opposite sides of planet.",
@@ -52,7 +74,22 @@ class Cities:
             return
 
         plot_path(disc, n_points, self.projection)
-        self.print_distance(key1, key2, disc.distance)
+        self.print_distance(key1, key2, disc.phi_destination*RADIUS_EARTH)
+
+    def distance(self, key1, key2):
+        try:
+            disc = self.disc(key1, key2)
+            distance = disc.phi_destination*RADIUS_EARTH
+        except IllConditionedException:
+            distance = math.pi*RADIUS_EARTH
+        if self.use_miles:
+            distance *= MILES_PER_KM
+        return round(distance)
+
+    @exception_handler
+    def disc(self, key1, key2):
+        vs = tuple(self.database.get(k) for k in (key1, key2))
+        return Disc(vs[0], vs[1])
 
     def print_distance(self, key1, key2, distance):
         if self.use_miles:
@@ -62,6 +99,7 @@ class Cities:
             units = "km"
         print "Distance from %s to %s is %.0f%s." % (key1,key2,distance,units)
 
+    @need_plot_setup
     def savefig(self, name, **kwargs):
         savefig(name, **kwargs)
 
@@ -130,7 +168,6 @@ class Disc(object):
         self.ex = pos1
         self.ey = np.cross(self.normal, self.ex)
         self.phi_destination = math.acos(np.dot(self.ex, pos2))
-        self.distance = self.phi_destination * RADIUS_EARTH
 
     def edge(self, phi):
         edge = self.ex*math.cos(phi) + self.ey*math.sin(phi)
@@ -290,8 +327,8 @@ def test_projection(projection):
 #                                                              #
 # ------------------------------------------------------------ #
 
-def get_index(arr, x):
-    i = (len(arr)-1)*(x-arr[0]) / (arr[-1]-arr[0])
+def get_index(xmin, xmax, nx, x):
+    i = (nx-1)*(x-xmin) / (xmax-xmin)
     return int(math.ceil(i))
 
 def set_up_plot(projection):
@@ -340,16 +377,22 @@ def set_up_plot(projection):
         ax.spines[side].set_visible(False)
 
     # Plot land and sea
-    with np.load("mapdata.npz", "w") as data:
+    if LooseVersion(np.__version__) < LooseVersion('1.7'):
+        data = np.load("mapdata.npz")
         mymap = data["data"]
+        del data
+    else:
+        with np.load("mapdata.npz") as data:
+            mymap = data["data"]
 
     x = np.linspace(xmin, xmax, 800)
     y = np.linspace(ymin, ymax, 401)
     z = np.zeros([len(y), len(x)])
     # For each z, need to find corresponding point in the map
-    map_x = np.linspace(-math.pi,math.pi,len(mymap[0]))
-    map_y = np.linspace(math.pi/2.,-math.pi/2.,len(mymap[:,0]))
-    map_y_for_get_index = -map_y
+    xmin = -math.pi
+    xmax = math.pi
+    ymin = -math.pi/2.
+    ymax = math.pi/2.
     for yi in xrange(len(y)):
         for xi in xrange(len(x)):
             # Get lon and lat in radians for efficiency
@@ -358,11 +401,15 @@ def set_up_plot(projection):
                 z[yi,xi] = 0
             else:
                 mlat = -lat
-                map_xi = get_index(map_x, lon)
-                map_yi = get_index(map_y_for_get_index, mlat)
+                map_xi = get_index(xmin, xmax, len(mymap[0]), lon)
+                map_yi = get_index(ymin, ymax, len(mymap[:,0]), mlat)
                 z[yi,xi] = mymap[map_yi,map_xi]
 
-    plt.pcolormesh(x,y,z, cmap=plt.cm.Blues, edgecolors='face')
+    import matplotlib
+    if LooseVersion(matplotlib.__version__) < LooseVersion("1.1.3"):
+        plt.pcolor(x,y,z, cmap=plt.cm.Blues)
+    else:
+        plt.pcolormesh(x,y,z, cmap=plt.cm.Blues, edgecolors='face')
     plt.clim([0,4])
 
     return fig,ax
