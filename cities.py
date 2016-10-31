@@ -21,19 +21,11 @@ def distance(coords1, coords2, radius=RADIUS_EARTH):
         phi = math.pi
     return phi*radius
 
-def exception_handler(f):
-    def helper(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except DatabaseKeyError:
-            pass
-    return helper
-
 def need_plot_setup(f):
     def helper(*args, **kwargs):
         if not args[0].plot:
-            print "Need to use an instance of Cities initialised with plot=True"
-            return
+            s = "Need to use an instance of Cities initialised with plot=True"
+            raise TypeError(s)
         return f(*args, **kwargs)
     return helper
 
@@ -50,7 +42,6 @@ class Cities:
             self.plotted_cities = set()
             set_up_plot(projection)
 
-    @exception_handler
     @need_plot_setup
     def plot_city(self, key):
         if key in self.plotted_cities:
@@ -86,7 +77,6 @@ class Cities:
             distance *= MILES_PER_KM
         return round(distance)
 
-    @exception_handler
     def disc(self, key1, key2):
         vs = tuple(self.database.get(k) for k in (key1, key2))
         return Disc(vs[0], vs[1])
@@ -197,17 +187,14 @@ class Database(object):
             d[city] = (lon, lat)
 
         self.d = d
-        self.printed_exceptions = set()
 
     def get(self, key):
         # Analogous to normal dict get method
         try:
             return self.d[key]
         except KeyError:
-            if key not in self.printed_exceptions:
-                print "%s not found in database" % key
-                self.printed_exceptions.add(key)
-            raise DatabaseKeyError
+            s = "%s not found in database" % key
+            raise DatabaseKeyError(s)
 
     def add(self, name, lon, lat):
         self.d[name] = (lon, lat)
@@ -226,6 +213,16 @@ class Projection_Radians(object):
     def inverse(self, x, y):
         (lon, lat) = self._inverse(x, y)
         return (degrees(lon), degrees(lat))
+
+class Projection_Degrees(object):
+    # For projections implemented using degrees - since both implementations
+    # are required by the program
+    def _xy(self, longitude, latitude):
+        return self.xy(degrees(longitude, degrees(latitude)))
+
+    def _inverse(self, x, y):
+        (lon, lat) = self.inverse(x, y)
+        return (radians(lon), radians(lat))
 
 class Equirectangular(Projection_Radians):
     def xlimits(self):
@@ -320,6 +317,7 @@ def test_projection(projection):
             #   (x,y,lon,lat,xnew,ynew)
             assert abs(xnew-x)<1e-5
             assert abs(ynew-y)<1e-5
+    print "%s passed projection test." % projection.__class__.__name__
 
 # ------------------------------------------------------------ #
 #                                                              #
@@ -341,14 +339,10 @@ def set_up_plot(projection):
     plt.ylim([ymin, ymax])
     ax.set_aspect('equal')
 
-    xt_deg = range(-150, 160, 30)
-    yt_deg = range(-60, 70, 30)
-    xvals_deg = range(-180, 181, 1)
-    yvals_deg = range(-90, 91, 1)
-    xt = map(radians, xt_deg)
-    yt = map(radians, yt_deg)
-    xvals = map(radians, xvals_deg)
-    yvals = map(radians, yvals_deg)
+    xt = map(radians,range(-150, 160, 30))
+    yt = map(radians,range(-60, 70, 30))
+    xvals = map(radians,range(-180, 181, 1))
+    yvals = map(radians,range(-90, 91, 1))
 
     # Plot grid lines
     # Lines of longitude
@@ -385,25 +379,30 @@ def set_up_plot(projection):
         with np.load("mapdata.npz") as data:
             mymap = data["data"]
 
-    x = np.linspace(xmin, xmax, 800)
-    y = np.linspace(ymin, ymax, 401)
-    z = np.zeros([len(y), len(x)])
-    # For each z, need to find corresponding point in the map
-    xmin = -math.pi
-    xmax = math.pi
-    ymin = -math.pi/2.
-    ymax = math.pi/2.
-    for yi in xrange(len(y)):
-        for xi in xrange(len(x)):
-            # Get lon and lat in radians for efficiency
-            (lon, lat) = projection._inverse(x[xi], y[yi])
-            if lon<-math.pi or lon>math.pi or lat<-math.pi/2. or lat>math.pi/2.:
-                z[yi,xi] = 0
-            else:
-                mlat = -lat
-                map_xi = get_index(xmin, xmax, len(mymap[0]), lon)
-                map_yi = get_index(ymin, ymax, len(mymap[:,0]), mlat)
-                z[yi,xi] = mymap[map_yi,map_xi]
+    if type(projection) is Equirectangular:
+        x = np.linspace(xmin, xmax, len(mymap[0]))
+        y = np.linspace(ymax, ymin, len(mymap[:,0]))
+        z = mymap
+    else:
+        x = np.linspace(xmin, xmax, 800)
+        y = np.linspace(ymin, ymax, 401)
+        z = np.zeros([len(y), len(x)])
+        # For each z, need to find corresponding point in the map
+        xmin = -math.pi
+        xmax = math.pi
+        ymin = -math.pi/2.
+        ymax = math.pi/2.
+        for yi in xrange(len(y)):
+            for xi in xrange(len(x)):
+                # Get lon and lat in radians for efficiency
+                (lon, lat) = projection._inverse(x[xi], y[yi])
+                if lon<-math.pi or lon>math.pi or lat<-math.pi/2. or lat>math.pi/2.:
+                    z[yi,xi] = 0
+                else:
+                    mlat = -lat
+                    map_xi = get_index(xmin, xmax, len(mymap[0]), lon)
+                    map_yi = get_index(ymin, ymax, len(mymap[:,0]), mlat)
+                    z[yi,xi] = mymap[map_yi,map_xi]
 
     import matplotlib
     if LooseVersion(matplotlib.__version__) < LooseVersion("1.1.3"):
