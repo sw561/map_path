@@ -238,6 +238,9 @@ class Equirectangular(Projection_Radians):
         return (x, y)
 
 class Lambert(Projection_Radians):
+    def __init__(self, lam0=0):
+        self.lam0 = radians(lam0) # Central meridian
+
     def xlimits(self):
         return (-math.pi, math.pi)
 
@@ -245,6 +248,8 @@ class Lambert(Projection_Radians):
         return (-1,1)
 
     def _xy(self, longitude, latitude):
+        longitude -= self.lam0
+        if longitude<-math.pi: longitude += 2*math.pi
         x = longitude
         y = math.sin(latitude)
         return (x,y)
@@ -252,9 +257,14 @@ class Lambert(Projection_Radians):
     def _inverse(self, x, y):
         lon = x
         lat = math.asin(y)
+        lon += self.lam0
+        if lon>math.pi: lon -= 2*math.pi
         return (lon,lat)
 
 class Mollweide(Projection_Radians):
+    def __init__(self, lam0=0):
+        self.lam0 = radians(lam0) # Central meridian
+
     def xlimits(self):
         r2 = math.sqrt(2)
         return (-2*r2, 2*r2)
@@ -295,6 +305,8 @@ class Mollweide(Projection_Radians):
         return theta0
 
     def _xy(self, longitude, latitude):
+        longitude -= self.lam0
+        if longitude<-math.pi: longitude += 2*math.pi
         theta = self.theta(latitude)
         x = 2*math.sqrt(2)/math.pi * longitude * math.cos(theta)
         y = math.sqrt(2) * math.sin(theta)
@@ -304,6 +316,8 @@ class Mollweide(Projection_Radians):
         theta = math.asin(y/math.sqrt(2))
         lon = math.pi*x / (2*math.sqrt(2)*math.cos(theta))
         lat = math.asin( (2*theta+math.sin(2*theta))/math.pi )
+        lon += self.lam0
+        if lon>math.pi: lon -= 2*math.pi
         return (lon,lat)
 
 def test_projection(projection):
