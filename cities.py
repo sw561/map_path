@@ -176,17 +176,17 @@ class DatabaseKeyError(Exception):
 class Database(object):
     # A custom dict for handling the city coordinate data
     def __init__(self, path):
-        f = open(path,"r")
-        d = dict()
-        for line in f:
-            if line[0]=='#': continue
-            parts = line.strip().split()
-            lon = float(parts[-2])
-            lat = float(parts[-1])
-            city = " ".join(parts[:-2])
-            d[city] = (lon, lat)
+        with open(path,"r") as f:
+            d = dict()
+            for line in f:
+                if line[0]=='#': continue
+                parts = line.strip().split()
+                lon = float(parts[-2])
+                lat = float(parts[-1])
+                city = " ".join(parts[:-2])
+                d[city] = (lon, lat)
 
-        self.d = d
+            self.d = d
 
     def get(self, key):
         # Analogous to normal dict get method
